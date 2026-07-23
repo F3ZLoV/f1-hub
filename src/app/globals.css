@@ -1,0 +1,122 @@
+/* ══════════════════════════════════════════════════════
+   F1 Hub — 방송 그래픽 스타일 디자인 토큰
+   레퍼런스: F1 중계 타이밍 그래픽 (각진 클립 코너, 팀컬러 스트라이프)
+   폰트: Geist(본문) / Geist Mono(데이터) / Chakra Petch(디스플레이)
+   ══════════════════════════════════════════════════════ */
+:root {
+  --bg: #0B0C0F;
+  --surface: #14161B;
+  --surface-2: #1C1F26;
+  --line: #262A32;
+  --text: #F2F4F7;
+  --muted: #858C99;
+  --dim: #4A515C;
+
+  --f1-red: #E10600;
+  --accent: #E10600;
+  --live: #FF2D20;
+  --up: #38E08A;
+  --down: #FF5C5C;
+
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-display: "Chakra Petch", var(--font-sans);
+
+  /* 방송 그래픽 시그니처: 각진 클립 코너 */
+  --clip: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  --clip-sm: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+body {
+  /* 미세한 그리드 배경 (방송 그래픽 느낌) */
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  background-position: -1px -1px;
+  background-attachment: fixed;
+}
+body::before {
+  content: "";
+  position: fixed; inset: 0;
+  background: radial-gradient(ellipse at top, transparent, var(--bg) 70%);
+  pointer-events: none; z-index: 0;
+}
+
+a { color: inherit; text-decoration: none; }
+::selection { background: var(--f1-red); color: #fff; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--line); }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
+
+/* ── 타이포 유틸 ── */
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.display { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.01em; }
+.muted { color: var(--muted); }
+
+/* eyebrow — 방송 그래픽 라벨 */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* 페이지 헤더 공통 */
+.page-head { position: relative; z-index: 1; margin-bottom: 28px; }
+.page-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 34px;
+  letter-spacing: 0.01em;
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+
+/* 카드 — 방송 그래픽 클립 코너 */
+.card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  clip-path: var(--clip);
+  z-index: 1;
+}
+
+/* 방송 스타일 헤더 바 (레드 사선 액센트) */
+.gfx-bar {
+  position: relative;
+  padding-left: 14px;
+}
+.gfx-bar::before {
+  content: "";
+  position: absolute; left: 0; top: 2px; bottom: 2px;
+  width: 4px; background: var(--f1-red);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 4px), 0 100%);
+}
+
+/* LIVE 배지 */
+.live-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.12em; color: var(--live);
+}
+.live-badge::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--live); animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
