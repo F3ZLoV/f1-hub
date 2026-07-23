@@ -176,103 +176,181 @@ export default function ReplayViewer({
 
       ctx.clearRect(0, 0, w, h);
 
-      // 트랙 아웃라인 (가장 프레임이 많은 드라이버 경로)
-      let path = data.drivers[0]?.frames ?? [];
-      for (const d of data.drivers) if (d.frames.length > path.length) path = d.frames;
+      // 트랙 아웃라인 — 분석된 한 바퀴 경로가 있으면 그것으로 그린다.
+      // 원본 프레임을 그대로 겹치면 피트레인과 좌표 노이즈까지 같이 그려진다.
+      const geoBase = geoRef.current;
       ctx.strokeStyle = "#1E2733";
       ctx.lineWidth = 13;
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
       ctx.beginPath();
-      for (let i = 0; i < path.length; i++) {
-        const X = px(path[i].x), Y = py(path[i].y);
-        i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+      if (geoBase) {
+        const gp = geoBase.path;
+        for (let i = 0; i < gp.length; i++) {
+          const X = px(gp[i].x), Y = py(gp[i].y);
+          i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+        }
+        ctx.closePath();
+      } else {
+        let path = data.drivers[0]?.frames ?? [];
+        for (const d of data.drivers) if (d.frames.length > path.length) path = d.frames;
+        for (let i = 0; i < path.length; i++) {
+          const X = px(path[i].x), Y = py(path[i].y);
+          i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+        }
       }
       ctx.stroke();
 
-      // ── 트랙 구조 오버레이 ──
+      // ── 트랙 구조 오버레이 (F1 공식 서킷맵 스타일) ──
       const g = geoRef.current;
       if (g && showMapRef.current) {
-        const gp = g.path;
-        const N = gp.length;
-        const boostColor = modernRef.current ? "#A78BFA" : "#22D3EE";
+        const N = g.path.length;
+        // 화면 좌표로 미리 변환 — 오프셋을 픽셀 단위로 다루기 위해
+        const S = g.path.map((p) => ({ x: px(p.x), y: py(p.y) }));
 
-        // 구간을 따라 선 그리기 (원형 wrap 처리)
-        const strokeRun = (from: number, to: number, color: string, w: number) => {
+        // 폴리곤 회전 방향으로 '바깥쪽'을 한 번만 결정한다.
+        // 중심점 기준으로 점마다 판정하면 오목한 구간에서 법선이 뒤집혀
+        // 오프셋 선이 트랙을 가로지르며 직각으로 꺾인다.
+        let area2 = 0;
+        for (let i = 0; i < N; i++) {
+          const a = S[i], b = S[(i + 1) % N];
+          area2 += a.x * b.y - b.x * a.y;
+        }
+        const side = area2 > 0 ? 1 : -1;
+
+        const outward = (i: number) => {
+          const a = S[(i - 3 + N) % N], b = S[(i + 3) % N];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const l = Math.hypot(dx, dy) || 1;
+          return { nx: (side * dy) / l, ny: (-side * dx) / l };
+        };
+
+        // 급한 코너에서는 오프셋을 줄인다.
+        // 곡률 반경보다 크게 밀면 평행선이 스스로 접혀 교차한다.
+        const offScale = (i: number) => {
+          const a = S[(i - 3 + N) % N], b = S[i], c = S[(i + 3) % N];
+          const v1x = b.x - a.x, v1y = b.y - a.y;
+          const v2x = c.x - b.x, v2y = c.y - b.y;
+          const l1 = Math.hypot(v1x, v1y), l2 = Math.hypot(v2x, v2y);
+          if (!l1 || !l2) return 1;
+          const cos = Math.min(1, Math.max(-1, (v1x * v2x + v1y * v2y) / (l1 * l2)));
+          const deg = (Math.acos(cos) * 180) / Math.PI;
+          return Math.max(0.35, 1 - deg / 45);
+        };
+
+        const strokeRun = (
+          from: number, to: number, color: string, w: number,
+          offset = 0, dash: number[] | null = null
+        ) => {
           const len = (to - from + N) % N;
           ctx.strokeStyle = color;
           ctx.lineWidth = w;
           ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+          if (dash) ctx.setLineDash(dash);
           ctx.beginPath();
           for (let k = 0; k <= len; k++) {
             const i = (from + k) % N;
-            const X = px(gp[i].x), Y = py(gp[i].y);
+            let X = S[i].x, Y = S[i].y;
+            if (offset) {
+              const { nx, ny } = outward(i);
+              const o = offset * offScale(i);
+              X += nx * o; Y += ny * o;
+            }
             k ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
           }
           ctx.stroke();
+          if (dash) ctx.setLineDash([]);
         };
 
-        // 직선 구간 — 살짝 밝게
-        for (const st of g.straights) strokeRun(st.from, st.to, "#2C3542", 13);
-        // 부스트 존 — DRS(하늘) / 오버테이크(보라)
-        for (const z of g.boostZones) {
-          ctx.globalAlpha = 0.85;
-          strokeRun(z.from, z.to, boostColor, 15);
+        const nearestOnPath = (p: { x: number; y: number }) => {
+          let best = 0, bd = Infinity;
+          for (let i = 0; i < N; i++) {
+            const dd = (g.path[i].x - p.x) ** 2 + (g.path[i].y - p.y) ** 2;
+            if (dd < bd) { bd = dd; best = i; }
+          }
+          return best;
+        };
+
+        // ① 섹터별로 트랙 색칠 (S1 레드 · S2 시안 · S3 옐로)
+        const secs = data.sectors ?? [];
+        const i2 = secs.find((x) => x.n === 2) ? nearestOnPath(secs.find((x) => x.n === 2)!) : -1;
+        const i3 = secs.find((x) => x.n === 3) ? nearestOnPath(secs.find((x) => x.n === 3)!) : -1;
+        if (i2 >= 0 && i3 >= 0) {
+          strokeRun(0, i2, "#E10600", 9);
+          strokeRun(i2, i3, "#22D3EE", 9);
+          strokeRun(i3, 0, "#FFD43B", 9);
+        } else {
+          strokeRun(0, N - 1, "#3A4452", 9);
+        }
+
+        // ② 부스트 존 — 트랙 바깥으로 평행 이동한 점선
+        const zoneColor = modernRef.current ? "#A78BFA" : "#39E07B";
+        if (hasBoostRef.current) {
+          for (const z of g.boostZones) strokeRun(z.from, z.to, zoneColor, 5, 15, [7, 5]);
+        } else if (modernRef.current) {
+          // 2026: 활성 데이터가 없다. 규정상 액티브 에어로는 지정된 직선에서만
+          // 쓰이므로, 가장 긴 직선 3개만 참고용으로 표시한다.
+          const longest = [...g.straights]
+            .sort((a, b) =>
+              ((b.to - b.from + N) % N) - ((a.to - a.from + N) % N)
+            )
+            .slice(0, 3);
+          ctx.globalAlpha = 0.7;
+          for (const st of longest) strokeRun(st.from, st.to, zoneColor, 4, 15, [5, 6]);
           ctx.globalAlpha = 1;
         }
 
-        // 트랙에 수직인 짧은 눈금 (디텍션·섹터 표시용)
-        const tick = (idx: number, color: string, label: string, dash: boolean) => {
-          const a = gp[(idx - 2 + N) % N], b = gp[(idx + 2) % N];
-          const dx = b.x - a.x, dy = b.y - a.y;
-          const len = Math.hypot(dx, dy) || 1;
-          const nx = (-dy / len), ny = (dx / len);
-          const cx = px(gp[idx].x), cy = py(gp[idx].y);
-          const L = 13;
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          if (dash) ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.moveTo(cx + nx * L, cy - ny * L);
-          ctx.lineTo(cx - nx * L, cy + ny * L);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          if (label) {
-            ctx.fillStyle = color;
+        // ③ 디텍션 — 트랙 위 점 + 지시선 + 라벨 (위치는 추정)
+        if (hasBoostRef.current) {
+          g.detections.forEach((d, k) => {
+            const { nx, ny } = outward(d.idx);
+            const p0 = S[d.idx];
+            const p1 = { x: p0.x + nx * 34, y: p0.y + ny * 34 };
+            ctx.strokeStyle = zoneColor;
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.moveTo(p0.x, p0.y);
+            ctx.lineTo(p1.x, p1.y);
+            ctx.stroke();
+            ctx.fillStyle = zoneColor;
+            ctx.beginPath();
+            ctx.arc(p0.x, p0.y, 4, 0, Math.PI * 2);
+            ctx.fill();
             ctx.font = "600 9px ui-monospace, monospace";
-            ctx.fillText(label, cx + nx * (L + 4) - 6, cy - ny * (L + 4));
-          }
-        };
-
-        // 디텍션 (데이터에 없어 추정)
-        for (const d of g.detections) tick(d.idx, boostColor, "DET", true);
-
-        // 섹터 경계 — 서버가 랩 섹터 소요시간으로 역산한 좌표
-        if (data.sectors?.length) {
-          for (const sp of data.sectors) {
-            const idx = (() => {
-              let best = 0, bd = Infinity;
-              for (let i = 0; i < N; i++) {
-                const dd = (gp[i].x - sp.x) ** 2 + (gp[i].y - sp.y) ** 2;
-                if (dd < bd) { bd = dd; best = i; }
-              }
-              return best;
-            })();
-            tick(idx, "#FFD43B", `S${sp.n}`, false);
-          }
-          tick(0, "#FFFFFF", "S1", false); // 스타트/피니시 = S1 시작
+            const label = `DET ${k + 1}`;
+            const tw = ctx.measureText(label).width;
+            ctx.fillText(label, p1.x - (nx < 0 ? tw : 0), p1.y + (ny < 0 ? 9 : -3));
+          });
         }
 
-        // 코너 번호
-        ctx.fillStyle = "#7A8290";
-        ctx.font = "600 9px ui-monospace, monospace";
+        // ④ 코너 번호 — 바깥쪽으로 밀어서 트랙과 겹치지 않게
+        ctx.font = "600 10px ui-monospace, monospace";
+        ctx.fillStyle = "#C9D1DA";
         for (const c of g.corners) {
-          const i = c.idx;
-          const a = gp[(i - 2 + N) % N], b = gp[(i + 2) % N];
-          const dx = b.x - a.x, dy = b.y - a.y;
-          const len = Math.hypot(dx, dy) || 1;
-          const nx = (-dy / len), ny = (dx / len);
-          ctx.fillText(String(c.n), px(c.x) + nx * 17 - 3, py(c.y) - ny * 17 + 3);
+          const { nx, ny } = outward(c.idx);
+          const X = S[c.idx].x + nx * 19;
+          const Y = S[c.idx].y + ny * 19;
+          const label = String(c.n).padStart(2, "0");
+          const tw = ctx.measureText(label).width;
+          ctx.fillText(label, X - tw / 2, Y + 3.5);
+        }
+
+        // ⑤ 스타트/피니시 — 체커 무늬
+        {
+          const { nx, ny } = outward(0);
+          const tx = -ny, ty = nx;  // 트랙 진행 방향
+          const p0 = S[0];
+          const half = 9, cell = 3;
+          for (let r = -1; r <= 0; r++) {
+            for (let q = -half / cell; q < half / cell; q++) {
+              const on = (Math.abs(Math.floor(q)) + Math.abs(r)) % 2 === 0;
+              ctx.fillStyle = on ? "#FFFFFF" : "#11151B";
+              const bx = p0.x + nx * (q * cell) + tx * (r * cell);
+              const by = p0.y + ny * (q * cell) + ty * (r * cell);
+              ctx.fillRect(bx - cell / 2, by - cell / 2, cell, cell);
+            }
+          }
         }
       }
 
@@ -488,25 +566,20 @@ export default function ReplayViewer({
           <canvas ref={canvasRef} />
           {showMap && geo && (
             <div className="legend mono">
-              <span>
-                <i className="sw" style={{ background: modern && !hasBoostData ? "#A78BFA" : "#2C3542" }} />
-                STRAIGHT{modern && !hasBoostData ? " (X-MODE)" : ""}
-              </span>
+              <span><i className="sw" style={{ background: "#E10600" }} />S1</span>
+              <span><i className="sw" style={{ background: "#22D3EE" }} />S2</span>
+              <span><i className="sw" style={{ background: "#FFD43B" }} />S3</span>
               {hasBoostData ? (
-                <>
-                  <span>
-                    <i className="sw" style={{ background: modern ? "#A78BFA" : "#22D3EE" }} />
-                    {modern ? "OVERTAKE" : "DRS"} ZONE
-                  </span>
-                  <span>
-                    <i className="sw dash" style={{ borderColor: modern ? "#A78BFA" : "#22D3EE" }} />
-                    DETECT (추정)
-                  </span>
-                </>
-              ) : (
-                <span className="dim">활성 데이터 미제공</span>
-              )}
-              <span><i className="sw" style={{ background: "#FFD43B" }} />SECTOR</span>
+                <span>
+                  <i className="sw dash" style={{ borderColor: modern ? "#A78BFA" : "#39E07B" }} />
+                  {modern ? "OVERTAKE" : "DRS"} ZONE · DET(추정)
+                </span>
+              ) : modern ? (
+                <span>
+                  <i className="sw dash" style={{ borderColor: "#A78BFA" }} />
+                  주요 직선 · 활성 데이터 미제공
+                </span>
+              ) : null}
               <span className="dim">{geo.corners.length} CORNERS</span>
             </div>
           )}
@@ -538,11 +611,18 @@ export default function ReplayViewer({
                 <div className="bar b"><i style={{ width: sf?.brake ? "100%" : "0%" }} /></div>
               </div>
             </div>
-            {modern ? (
-              <span className="aero otm mono">OVERTAKE</span>
+            {!hasBoostData ? (
+              <span
+                className="aero na mono"
+                title="OpenF1이 이 세션의 활성 데이터를 제공하지 않습니다"
+              >
+                {modern ? "OVERTAKE" : "DRS"} · N/A
+              </span>
             ) : (
-              <span className={`aero mono ${DRS_ON.includes(sf?.drs ?? -1) ? "on" : ""}`}>
-                {DRS_ON.includes(sf?.drs ?? -1) ? "DRS ●" : "DRS"}
+              <span className={`aero mono ${DRS_ON.includes(sf?.drs ?? -1) ? (modern ? "otm" : "on") : ""}`}>
+                {DRS_ON.includes(sf?.drs ?? -1)
+                  ? `${modern ? "OVERTAKE" : "DRS"} ●`
+                  : modern ? "OVERTAKE" : "DRS"}
               </span>
             )}
           </div>
