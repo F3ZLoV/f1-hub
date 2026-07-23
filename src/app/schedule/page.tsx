@@ -1,8 +1,9 @@
+"use client";
+
 import { getSchedule, getNextRace, type Race } from "@/lib/f1api";
 import Flag from "@/components/Flag";
 import Countdown from "@/components/Countdown";
-
-export const metadata = { title: "Schedule — F1 Hub" };
+import { useAsync } from "@/lib/useAsync";
 
 function raceDateTime(r: Race): string {
   return `${r.date}T${r.time ?? "12:00:00Z"}`;
@@ -11,16 +12,24 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
 
-export default async function SchedulePage() {
+export default function SchedulePage() {
   const season = new Date().getFullYear();
-  const [races, next] = await Promise.all([getSchedule(season), getNextRace(season)]);
+  const { data, loading } = useAsync(async () => {
+    const [races, next] = await Promise.all([getSchedule(season), getNextRace(season)]);
+    return { races, next };
+  }, [season]);
+
+  const races = data?.races ?? [];
+  const next = data?.next ?? null;
   const now = new Date();
   const nextRound = next?.round;
 
   return (
     <div>
       <header className="page-head">
-        <div className="eyebrow">SEASON {season} · {races.length} ROUNDS</div>
+        <div className="eyebrow">
+          SEASON {season}{races.length ? ` · ${races.length} ROUNDS` : ""}
+        </div>
         <h1 className="page-title">Race Calendar</h1>
       </header>
 
@@ -38,6 +47,8 @@ export default async function SchedulePage() {
           <Countdown target={raceDateTime(next)} />
         </div>
       )}
+
+      {loading && <div className="card msg">불러오는 중…</div>}
 
       <div className="schedule-list">
         {races.map((r) => {
@@ -61,6 +72,7 @@ export default async function SchedulePage() {
       </div>
 
       <style>{`
+        .msg { padding: 28px; text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
         .next-race {
           display: flex; justify-content: space-between; align-items: center;
           padding: 26px 30px; margin-bottom: 28px;
@@ -81,7 +93,6 @@ export default async function SchedulePage() {
         .race-row.past { opacity: 0.45; }
         .race-row.is-next { border-color: var(--f1-red); }
         .race-round { font-size: 15px; color: var(--muted); }
-        .race-flag { font-size: 22px; }
         .race-name { font-size: 15px; font-weight: 600; }
         .race-loc { font-size: 11px; color: var(--muted); margin-top: 2px; }
         .race-date { font-size: 13px; text-align: right; }

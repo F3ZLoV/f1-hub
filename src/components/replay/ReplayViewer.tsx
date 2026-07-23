@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { analyzeTrack, type TrackGeometry } from "@/lib/trackGeometry";
 import type { Frame, Driver, ReplayData } from "./useReplayData";
 
 // ── 연도별 규정 (2026: DRS 폐지 → Overtake Mode) ──────
@@ -47,6 +48,34 @@ export default function ReplayViewer({
   const [clock, setClock] = useState(0);
   const [snapshot, setSnapshot] = useState<Record<number, Frame>>({});
   const [order, setOrder] = useState<number[]>([]);
+  const [showMap, setShowMap] = useState(true);
+
+  // 트랙 구조 분석 — 프레임이 늘어날 때만 다시 계산
+  const frameTotal = data
+    ? data.drivers.reduce((n, d) => n + d.frames.length, 0)
+    : 0;
+  const geo: TrackGeometry | null = useMemo(
+    () => (data ? analyzeTrack(data.drivers) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data?.session_key, frameTotal]
+  );
+  // 이 세션에 부스트(DRS/오버테이크) 데이터가 존재하는가
+  // 2026 은 OpenF1 이 drs 를 전부 null 로 주므로 false 가 된다
+  const hasBoostData = useMemo(() => {
+    if (!data) return false;
+    for (const d of data.drivers) {
+      for (const f of d.frames) if (f.drs != null) return true;
+    }
+    return false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.session_key, frameTotal]);
+
+  const geoRef = useRef<TrackGeometry | null>(null);
+  const showMapRef = useRef(true);
+  const hasBoostRef = useRef(false);
+  useEffect(() => { geoRef.current = geo; renderRef.current?.(clockRef.current); }, [geo]);
+  useEffect(() => { showMapRef.current = showMap; renderRef.current?.(clockRef.current); }, [showMap]);
+  useEffect(() => { hasBoostRef.current = hasBoostData; renderRef.current?.(clockRef.current); }, [hasBoostData]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -60,6 +89,7 @@ export default function ReplayViewer({
   const renderRef = useRef<((t: number) => void) | null>(null);
   const maxTRef = useRef(0);
   const sessionRef = useRef<number | null>(null);
+  const modernRef = useRef(false);
 
   useEffect(() => { playingRef.current = playing; }, [playing]);
   useEffect(() => { speedRef.current = speed; }, [speed]);
@@ -159,6 +189,92 @@ export default function ReplayViewer({
         i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
       }
       ctx.stroke();
+
+      // ── 트랙 구조 오버레이 ──
+      const g = geoRef.current;
+      if (g && showMapRef.current) {
+        const gp = g.path;
+        const N = gp.length;
+        const boostColor = modernRef.current ? "#A78BFA" : "#22D3EE";
+
+        // 구간을 따라 선 그리기 (원형 wrap 처리)
+        const strokeRun = (from: number, to: number, color: string, w: number) => {
+          const len = (to - from + N) % N;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = w;
+          ctx.lineCap = "round";
+          ctx.beginPath();
+          for (let k = 0; k <= len; k++) {
+            const i = (from + k) % N;
+            const X = px(gp[i].x), Y = py(gp[i].y);
+            k ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+          }
+          ctx.stroke();
+        };
+
+        // 직선 구간 — 살짝 밝게
+        for (const st of g.straights) strokeRun(st.from, st.to, "#2C3542", 13);
+        // 부스트 존 — DRS(하늘) / 오버테이크(보라)
+        for (const z of g.boostZones) {
+          ctx.globalAlpha = 0.85;
+          strokeRun(z.from, z.to, boostColor, 15);
+          ctx.globalAlpha = 1;
+        }
+
+        // 트랙에 수직인 짧은 눈금 (디텍션·섹터 표시용)
+        const tick = (idx: number, color: string, label: string, dash: boolean) => {
+          const a = gp[(idx - 2 + N) % N], b = gp[(idx + 2) % N];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const nx = (-dy / len), ny = (dx / len);
+          const cx = px(gp[idx].x), cy = py(gp[idx].y);
+          const L = 13;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          if (dash) ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.moveTo(cx + nx * L, cy - ny * L);
+          ctx.lineTo(cx - nx * L, cy + ny * L);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          if (label) {
+            ctx.fillStyle = color;
+            ctx.font = "600 9px ui-monospace, monospace";
+            ctx.fillText(label, cx + nx * (L + 4) - 6, cy - ny * (L + 4));
+          }
+        };
+
+        // 디텍션 (데이터에 없어 추정)
+        for (const d of g.detections) tick(d.idx, boostColor, "DET", true);
+
+        // 섹터 경계 — 서버가 랩 섹터 소요시간으로 역산한 좌표
+        if (data.sectors?.length) {
+          for (const sp of data.sectors) {
+            const idx = (() => {
+              let best = 0, bd = Infinity;
+              for (let i = 0; i < N; i++) {
+                const dd = (gp[i].x - sp.x) ** 2 + (gp[i].y - sp.y) ** 2;
+                if (dd < bd) { bd = dd; best = i; }
+              }
+              return best;
+            })();
+            tick(idx, "#FFD43B", `S${sp.n}`, false);
+          }
+          tick(0, "#FFFFFF", "S1", false); // 스타트/피니시 = S1 시작
+        }
+
+        // 코너 번호
+        ctx.fillStyle = "#7A8290";
+        ctx.font = "600 9px ui-monospace, monospace";
+        for (const c of g.corners) {
+          const i = c.idx;
+          const a = gp[(i - 2 + N) % N], b = gp[(i + 2) % N];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const nx = (-dy / len), ny = (dx / len);
+          ctx.fillText(String(c.n), px(c.x) + nx * 17 - 3, py(c.y) - ny * 17 + 3);
+        }
+      }
 
       // 차량
       const state: Record<number, Frame> = {};
@@ -308,6 +424,7 @@ export default function ReplayViewer({
 
   const year = data.year ?? inferYear(data.session_key);
   const modern = isModern(year);
+  modernRef.current = modern;
   const sel = data.drivers.find((d) => d.number === selected) ?? data.drivers[0];
   const sf = snapshot[sel.number];
   const maxT = maxTRef.current;
@@ -348,6 +465,13 @@ export default function ReplayViewer({
         <span className={`era mono ${modern ? "modern" : ""}`}>
           {modern ? "OVERTAKE MODE ERA" : "DRS ERA"}
         </span>
+        <button
+          className={`mapbtn mono ${showMap ? "on" : ""}`}
+          onClick={() => setShowMap((v) => !v)}
+          title="직선·부스트존·섹터·코너 번호 표시"
+        >
+          TRACK MAP
+        </button>
         <div className="clock display">
           {mm}:{ss}
         </div>
@@ -362,6 +486,30 @@ export default function ReplayViewer({
             {data.drivers.length} CARS
           </span>
           <canvas ref={canvasRef} />
+          {showMap && geo && (
+            <div className="legend mono">
+              <span>
+                <i className="sw" style={{ background: modern && !hasBoostData ? "#A78BFA" : "#2C3542" }} />
+                STRAIGHT{modern && !hasBoostData ? " (X-MODE)" : ""}
+              </span>
+              {hasBoostData ? (
+                <>
+                  <span>
+                    <i className="sw" style={{ background: modern ? "#A78BFA" : "#22D3EE" }} />
+                    {modern ? "OVERTAKE" : "DRS"} ZONE
+                  </span>
+                  <span>
+                    <i className="sw dash" style={{ borderColor: modern ? "#A78BFA" : "#22D3EE" }} />
+                    DETECT (추정)
+                  </span>
+                </>
+              ) : (
+                <span className="dim">활성 데이터 미제공</span>
+              )}
+              <span><i className="sw" style={{ background: "#FFD43B" }} />SECTOR</span>
+              <span className="dim">{geo.corners.length} CORNERS</span>
+            </div>
+          )}
         </div>
 
         <div className="side">
@@ -508,6 +656,24 @@ export default function ReplayViewer({
           border: 1px solid var(--line); padding: 4px 9px; }
         .era.modern { color: var(--f1-red); border-color: var(--f1-red); }
         .clock { margin-left: auto; font-size: 22px; font-variant-numeric: tabular-nums; }
+        .mapbtn {
+          background: var(--surface-2); color: var(--muted);
+          border: 1px solid var(--line); font-size: 10px;
+          letter-spacing: 0.1em; padding: 5px 10px; cursor: pointer;
+          clip-path: var(--clip-sm);
+        }
+        .mapbtn:hover { color: var(--text); }
+        .mapbtn.on { color: var(--text); border-color: var(--dim); }
+        .legend {
+          position: absolute; left: 16px; bottom: 14px;
+          display: flex; flex-wrap: wrap; gap: 12px;
+          font-size: 9px; letter-spacing: 0.08em; color: var(--muted);
+          pointer-events: none;
+        }
+        .legend span { display: flex; align-items: center; gap: 5px; }
+        .legend .sw { width: 12px; height: 3px; display: inline-block; }
+        .legend .sw.dash { height: 0; border-top: 2px dashed; }
+        .legend .dim { color: var(--dim); }
 
         /* 본체 */
         .body { display: grid; grid-template-columns: 1fr 272px 216px; gap: 10px; }
@@ -580,6 +746,7 @@ export default function ReplayViewer({
         }
         .aero.on { color: #22D3EE; border-color: #22D3EE; background: rgba(34,211,238,.08); }
         .aero.otm { color: #A78BFA; border-color: #A78BFA; background: rgba(167,139,250,.08); }
+        .aero.na { color: var(--dim); border-style: dashed; }
 
         /* AI */
         .ai-panel { padding: 14px 16px; }

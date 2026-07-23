@@ -1,17 +1,23 @@
+"use client";
+
 import { getDriverStandings, getDriverMeta } from "@/lib/f1api";
 import { teamColor } from "@/lib/teams";
 import Flag from "@/components/Flag";
 import DriverAvatar from "@/components/DriverAvatar";
+import { useAsync } from "@/lib/useAsync";
 
-export const metadata = { title: "Driver Standings — F1 Hub" };
-
-export default async function DriverStandingsPage() {
+export default function DriverStandingsPage() {
   const season = new Date().getFullYear();
-  const [standings, meta] = await Promise.all([
-    getDriverStandings(season),
-    getDriverMeta(),
-  ]);
+  const { data, loading } = useAsync(async () => {
+    const [standings, meta] = await Promise.all([
+      getDriverStandings(season),
+      getDriverMeta(),
+    ]);
+    return { standings, meta };
+  }, [season]);
 
+  const standings = data?.standings ?? [];
+  const meta = data?.meta ?? {};
   const leader = standings[0] ? Number(standings[0].points) : 0;
 
   return (
@@ -30,6 +36,8 @@ export default async function DriverStandingsPage() {
         <span className="th-r">PTS</span>
       </div>
 
+      {loading && <div className="card msg">불러오는 중…</div>}
+
       <div className="rows">
         {standings.map((s) => {
           const code = (s.Driver.code ?? s.Driver.familyName.slice(0, 3)).toUpperCase();
@@ -39,7 +47,13 @@ export default async function DriverStandingsPage() {
           return (
             <div key={s.Driver.driverId} className="row card">
               <span className="pos display">{s.position}</span>
-              <DriverAvatar src={m?.headshot_url} driverId={s.Driver.driverId} code={code} color={color} />              <div className="driver">
+              <DriverAvatar
+                src={m?.headshot_url}
+                driverId={s.Driver.driverId}
+                code={code}
+                color={color}
+              />
+              <div className="driver">
                 <div className="d-name">
                   <span className="d-flag"><Flag country={s.Driver.nationality} size={18} /></span>
                   {s.Driver.givenName} <strong>{s.Driver.familyName}</strong>
@@ -61,6 +75,7 @@ export default async function DriverStandingsPage() {
       </div>
 
       <style>{`
+        .msg { padding: 28px; text-align: center; color: var(--muted); font-size: 13px; }
         .table-head {
           display: grid;
           grid-template-columns: 48px 44px 1fr 200px 60px 90px;

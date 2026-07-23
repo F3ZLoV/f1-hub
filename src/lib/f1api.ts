@@ -72,9 +72,9 @@ export interface OpenF1Driver {
 }
 
 // ── fetch 헬퍼 ────────────────────────────────────────
-async function jolpica<T>(path: string, revalidate = 3600): Promise<T> {
+async function jolpica<T>(path: string): Promise<T> {
+  // 정적 사이트라 브라우저에서 직접 호출 (Jolpica는 공개 API, CORS 허용)
   const res = await fetch(`${JOLPICA}/${path}`, {
-    next: { revalidate },
     headers: { Accept: "application/json" },
   });
   if (!res.ok) throw new Error(`Jolpica ${res.status}: ${path}`);
@@ -104,11 +104,45 @@ export async function getNextRace(season: string | number = "current"): Promise<
   return races.find((r) => new Date(`${r.date}T${r.time ?? "00:00:00Z"}`) >= now) ?? null;
 }
 
-/** 한 시즌의 모든 레이스 결과 (완료된 것만) */
-export async function getSeasonResults(season: string | number): Promise<RaceWithResults[]> {
-  // limit 넉넉히 (한 시즌 ~24R × 20명 = 480행) — 라운드별로 나눠 오지만 Jolpica는 flat 반환
-  const data = await jolpica<any>(`${season}/results/?limit=600`);
+/** 시즌 결과 파일 캐시 (S3+CloudFront 에 구운 것). 없으면 null */
+const seasonFileCache = new Map<string, RaceWithResults[] | null>();
+
+async function loadSeasonFile(season: string | number): Promise<RaceWithResults[] | null> {
+  const key = String(season);
+  if (seasonFileCache.has(key)) return seasonFileCache.get(key)!;
+  let val: RaceWithResults[] | null = null;
+  try {
+    // 같은 오리진(CloudFront) — 엣지 캐시에서 바로 나온다
+    const res = await fetch(`/data/results-${key}.json`);
+    if (res.ok) val = await res.json();
+  } catch {
+    /* 캐시 없으면 아래에서 Jolpica 로 폴백 */
+  }
+  seasonFileCache.set(key, val);
+  return val;
+}
+
+/** 시즌 우승자 목록 (레이스당 1행) — 결과 페이지 목록용 */
+export async function getSeasonWinners(season: string | number): Promise<RaceWithResults[]> {
+  const cached = await loadSeasonFile(season);
+  if (cached) {
+    return cached.map((r) => ({ ...r, Results: r.Results.slice(0, 1) }));
+  }
+  const data = await jolpica<any>(`${season}/results/1/?limit=100`);
   return data?.MRData?.RaceTable?.Races ?? [];
+}
+
+/** 특정 라운드의 전체 순위 */
+export async function getRoundResults(
+  season: string | number,
+  round: string | number
+): Promise<RaceWithResults | null> {
+  const cached = await loadSeasonFile(season);
+  if (cached) {
+    return cached.find((r) => r.round === String(round)) ?? null;
+  }
+  const data = await jolpica<any>(`${season}/${round}/results/?limit=100`);
+  return data?.MRData?.RaceTable?.Races?.[0] ?? null;
 }
 
 /** 특정 라운드 결과 */
@@ -128,8 +162,7 @@ export async function getDriverMeta(): Promise<Record<string, OpenF1Driver>> {
     const year = new Date().getFullYear();
     // 1) 올해 Race 세션들을 조회 (가장 최근 완료 세션의 라인업이 최신)
     const sessRes = await fetch(
-      `${OPENF1}/sessions?year=${year}&session_type=Race`,
-      { next: { revalidate: 86400 } }
+      `${OPENF1}/sessions?year=${year}&session_type=Race`
     );
     let sessionKey: number | null = null;
     if (sessRes.ok) {
@@ -144,7 +177,7 @@ export async function getDriverMeta(): Promise<Record<string, OpenF1Driver>> {
     const url = sessionKey
       ? `${OPENF1}/drivers?session_key=${sessionKey}`
       : `${OPENF1}/drivers?meeting_key=latest`;
-    const res = await fetch(url, { next: { revalidate: 86400 } });
+    const res = await fetch(url);
     if (!res.ok) return {};
     const list: OpenF1Driver[] = await res.json();
     const map: Record<string, OpenF1Driver> = {};
@@ -167,8 +200,7 @@ export async function getCircuitImage(
 ): Promise<string | null> {
   try {
     const res = await fetch(
-      `${OPENF1}/meetings?year=${year}&country_name=${encodeURIComponent(countryName)}`,
-      { next: { revalidate: 86400 } }
+      `${OPENF1}/meetings?year=${year}&country_name=${encodeURIComponent(countryName)}`
     );
     if (!res.ok) return null;
     const meetings: { circuit_image?: string }[] = await res.json();
@@ -176,4 +208,47 @@ export async function getCircuitImage(
   } catch {
     return null;
   }
+}
+
+// ── 드라이버 상세 ─────────────────────────────────────
+export interface DriverSeasonRace {
+  season: string;
+  round: string;
+  raceName: string;
+  date: string;
+  Circuit: Circuit;
+  Results: RaceResult[];
+}
+
+/** 드라이버 기본 정보 */
+export async function getDriverInfo(driverId: string): Promise<Driver | null> {
+  const data = await jolpica<any>(`drivers/${driverId}/`);
+  return data?.MRData?.DriverTable?.Drivers?.[0] ?? null;
+}
+
+/** 특정 시즌, 특정 드라이버의 라운드별 결과 */
+export async function getDriverSeasonResults(
+  season: string | number,
+  driverId: string
+): Promise<DriverSeasonRace[]> {
+  const data = await jolpica<any>(`${season}/drivers/${driverId}/results/?limit=40`);
+  return data?.MRData?.RaceTable?.Races ?? [];
+}
+
+/** 특정 시즌 드라이버의 챔피언십 순위 한 줄 */
+export async function getDriverStandingForSeason(
+  season: string | number,
+  driverId: string
+): Promise<DriverStanding | null> {
+  const data = await jolpica<any>(`${season}/drivers/${driverId}/driverstandings/`);
+  return (
+    data?.MRData?.StandingsTable?.StandingsLists?.[0]?.DriverStandings?.[0] ?? null
+  );
+}
+
+/** 드라이버가 출전한 시즌 목록 (최신순) */
+export async function getDriverSeasons(driverId: string): Promise<string[]> {
+  const data = await jolpica<any>(`drivers/${driverId}/seasons/?limit=40`);
+  const seasons: { season: string }[] = data?.MRData?.SeasonTable?.Seasons ?? [];
+  return seasons.map((s) => s.season).reverse();
 }

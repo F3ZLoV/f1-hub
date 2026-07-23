@@ -1,13 +1,19 @@
+"use client";
+
 import { getConstructorStandings } from "@/lib/f1api";
 import { teamColor } from "@/lib/teams";
 import Flag from "@/components/Flag";
 import TeamLogo from "@/components/TeamLogo";
+import { useAsync } from "@/lib/useAsync";
 
-export const metadata = { title: "Constructor Standings — F1 Hub" };
-
-export default async function ConstructorStandingsPage() {
+export default function ConstructorStandingsPage() {
   const season = new Date().getFullYear();
-  const standings = await getConstructorStandings(season);
+  const { data, loading } = useAsync(
+    () => getConstructorStandings(season),
+    [season]
+  );
+
+  const standings = data ?? [];
   const leader = standings[0] ? Number(standings[0].points) : 0;
 
   return (
@@ -24,16 +30,18 @@ export default async function ConstructorStandingsPage() {
         <span className="th-r">PTS</span>
       </div>
 
+      {loading && <div className="card msg">불러오는 중…</div>}
+
       <div className="rows">
         {standings.map((s) => {
           const id = s.Constructor.constructorId;
           const color = teamColor(id);
           const pct = leader ? (Number(s.points) / leader) * 100 : 0;
           return (
-            <div key={id} className="row card" style={{ ["--tc" as any]: color }}>
+            <div key={id} className="row card" style={{ ["--tc" as string]: color } as React.CSSProperties}>
               <span className="pos display">{s.position}</span>
               <div className="team">
-                <TeamLogo constructorId={id} name={s.Constructor.name} color={color} size={40} />
+                <TeamLogo constructorId={id} name={s.Constructor.name} size={40} />
                 <div className="team-info">
                   <div className="team-name">
                     <span className="t-flag"><Flag country={s.Constructor.nationality} size={18} /></span>
@@ -52,6 +60,7 @@ export default async function ConstructorStandingsPage() {
       </div>
 
       <style>{`
+        .msg { padding: 28px; text-align: center; color: var(--muted); font-size: 13px; }
         .table-head {
           display: grid; grid-template-columns: 48px 1fr 70px 100px;
           gap: 16px; align-items: center; padding: 0 20px 10px;

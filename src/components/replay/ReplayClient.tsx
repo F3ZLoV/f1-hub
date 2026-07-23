@@ -20,6 +20,7 @@ type SessionItem = {
   date_start: string;
 };
 
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 const FIRST_YEAR = 2023; // OpenF1 제공 시작
 const WINDOWS = [
   { label: "5분", v: 300 },
@@ -68,11 +69,15 @@ export default function ReplayClient() {
     setSessionKey(null);
     (async () => {
       try {
-        const res = await fetch(`/api/sessions?year=${year}`);
+        const res = await fetch(`${API_BASE}/sessions?year=${year}`);
         const body = await res.json();
         if (cancelled) return;
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
-        const list: Meeting[] = body.meetings ?? [];
+        // 아직 열리지 않은 그랑프리는 텔레메트리가 없으므로 제외
+        const nowIso = new Date().toISOString();
+        const list: Meeting[] = (body.meetings ?? []).filter(
+          (m: Meeting) => m.date_start < nowIso
+        );
         setMeetings(list);
         setMeetingKey(list.length ? list[0].meeting_key : null);
       } catch (e) {
@@ -95,7 +100,7 @@ export default function ReplayClient() {
     setLoadingS(true);
     (async () => {
       try {
-        const res = await fetch(`/api/sessions?meeting_key=${meetingKey}`);
+        const res = await fetch(`${API_BASE}/sessions?meeting_key=${meetingKey}`);
         const body = await res.json();
         if (cancelled) return;
         if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);

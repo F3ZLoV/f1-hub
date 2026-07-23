@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import {
   getNextRace,
@@ -8,17 +10,27 @@ import {
 import { teamColor } from "@/lib/teams";
 import Flag from "@/components/Flag";
 import Countdown from "@/components/Countdown";
+import { useAsync } from "@/lib/useAsync";
 
-export default async function Home() {
+export default function Home() {
   const season = new Date().getFullYear();
-  const [next, drivers, constructors] = await Promise.all([
-    getNextRace(season),
-    getDriverStandings(season),
-    getConstructorStandings(season),
-  ]);
-  const circuitImg = next
-    ? await getCircuitImage(next.Circuit.Location.country, season)
-    : null;
+
+  const { data, loading } = useAsync(async () => {
+    const [next, drivers, constructors] = await Promise.all([
+      getNextRace(season),
+      getDriverStandings(season),
+      getConstructorStandings(season),
+    ]);
+    const circuitImg = next
+      ? await getCircuitImage(next.Circuit.Location.country, season)
+      : null;
+    return { next, drivers, constructors, circuitImg };
+  }, [season]);
+
+  const next = data?.next ?? null;
+  const drivers = data?.drivers ?? [];
+  const constructors = data?.constructors ?? [];
+  const circuitImg = data?.circuitImg ?? null;
 
   return (
     <div>
@@ -28,25 +40,31 @@ export default async function Home() {
       </header>
 
       <div className="grid">
-        {/* 다음 레이스 — 방송 그래픽 히어로 */}
-        {next && (
-          <div className="card hero">
-            <div className="hero-top">
-              <span className="eyebrow">NEXT RACE</span>
-              <span className="hero-round mono">R{next.round}</span>
-            </div>
-            <div className="hero-flag"><Flag country={next.Circuit.Location.country} size={44} /></div>
-            {circuitImg && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img className="hero-circuit-img" src={circuitImg} alt={next.Circuit.circuitName} />
-            )}
-            <h2 className="hero-name display">{next.raceName}</h2>
-            <div className="hero-circuit mono">{next.Circuit.circuitName}</div>
-            <div className="hero-cd">
-              <Countdown target={`${next.date}T${next.time ?? "12:00:00Z"}`} />
-            </div>
-          </div>
-        )}
+        {/* 다음 레이스 */}
+        <div className="card hero">
+          {next ? (
+            <>
+              <div className="hero-top">
+                <span className="eyebrow">NEXT RACE</span>
+                <span className="hero-round mono">R{next.round}</span>
+              </div>
+              <div className="hero-flag">
+                <Flag country={next.Circuit.Location.country} size={44} />
+              </div>
+              {circuitImg && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img className="hero-circuit-img" src={circuitImg} alt={next.Circuit.circuitName} />
+              )}
+              <h2 className="hero-name display">{next.raceName}</h2>
+              <div className="hero-circuit mono">{next.Circuit.circuitName}</div>
+              <div className="hero-cd">
+                <Countdown target={`${next.date}T${next.time ?? "12:00:00Z"}`} />
+              </div>
+            </>
+          ) : (
+            <div className="skeleton">{loading ? "불러오는 중…" : "다음 레이스 정보 없음"}</div>
+          )}
+        </div>
 
         {/* 리플레이 */}
         <Link href="/replay" className="card replay">
@@ -63,6 +81,7 @@ export default async function Home() {
             <Link href="/standings/drivers" className="see-all mono">ALL →</Link>
           </div>
           <div className="std-table">
+            {loading && <div className="skeleton">불러오는 중…</div>}
             {drivers.slice(0, 6).map((s) => (
               <div key={s.Driver.driverId} className="std-row">
                 <span className="std-pos display">{s.position}</span>
@@ -82,6 +101,7 @@ export default async function Home() {
             <Link href="/standings/constructors" className="see-all mono">ALL →</Link>
           </div>
           <div className="std-table">
+            {loading && <div className="skeleton">불러오는 중…</div>}
             {constructors.slice(0, 6).map((s) => (
               <div key={s.Constructor.constructorId} className="std-row">
                 <span className="std-pos display">{s.position}</span>
@@ -104,6 +124,7 @@ export default async function Home() {
         .std-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
         .see-all { font-size: 11px; color: var(--muted); }
         .see-all:hover { color: var(--f1-red); }
+        .skeleton { padding: 24px 0; color: var(--muted); font-size: 13px; font-family: var(--font-mono); }
 
         /* 히어로 */
         .hero {
@@ -122,10 +143,8 @@ export default async function Home() {
         .hero-circuit { font-size: 12px; color: var(--muted); }
         .hero-circuit-img {
           position: absolute;
-          top: 20px;
-          right: 24px;
-          width: 100px;
-          height: 100px;
+          top: 20px; right: 24px;
+          width: 100px; height: 100px;
           object-fit: contain;
           opacity: 0.6;
           filter: brightness(0) invert(1);

@@ -19,8 +19,13 @@ export type ReplayData = {
   circuit?: string;
   country?: string;
   drivers: Driver[];
+  /** 섹터 경계 좌표 — 서버가 랩 섹터 소요시간에서 역산 */
+  sectors?: { n: number; x: number; y: number }[];
   bounds: { minX: number; maxX: number; minY: number; maxY: number };
 };
+
+/** API Gateway 베이스 (빌드 시 주입). 비어 있으면 동일 출처 */
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 const CHUNK = 300;       // 청크 길이(초) — OpenF1 응답이 감당 가능한 크기
 const CONCURRENCY = 3;   // 동시 요청 수 (과하면 OpenF1 레이트리밋)
@@ -76,7 +81,7 @@ export function useReplayData(sessionKey: number | null, opt: ReplayOptions) {
         dur: String(d),
         hz: String(hz),
       });
-      const res = await fetch(`/api/replay?${qs}`);
+      const res = await fetch(`${API_BASE}/replay?${qs}`);
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`);
       return body;
@@ -93,10 +98,13 @@ export function useReplayData(sessionKey: number | null, opt: ReplayOptions) {
           circuit: json.circuit,
           country: json.country,
           drivers: [],
+          sectors: json.sectors ?? [],
           bounds: json.bounds ?? { minX: 0, maxX: 1, minY: 0, maxY: 1 },
         };
       }
       const bag = bagRef.current;
+
+      if (json.sectors?.length && !bag.sectors?.length) bag.sectors = json.sectors;
 
       if (json.bounds) {
         bag.bounds = {
