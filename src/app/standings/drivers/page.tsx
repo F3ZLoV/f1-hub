@@ -5,6 +5,7 @@ import { teamColor } from "@/lib/teams";
 import Flag from "@/components/Flag";
 import DriverAvatar from "@/components/DriverAvatar";
 import TeamLogo from "@/components/TeamLogo";
+import Link from "next/link";
 import { useAsync } from "@/lib/useAsync";
 
 export default function DriverStandingsPage() {
@@ -54,13 +55,13 @@ export default function DriverStandingsPage() {
                 code={code}
                 color={color}
               />
-              <div className="driver">
+              <Link href={`/drivers/${s.Driver.driverId}`} className="driver">
                 <div className="d-name">
                   <span className="d-flag"><Flag country={s.Driver.nationality} size={18} /></span>
                   {s.Driver.givenName} <strong>{s.Driver.familyName}</strong>
                 </div>
                 <div className="d-num mono">#{s.Driver.permanentNumber ?? "—"} · {code}</div>
-              </div>
+              </Link>
               <div className="team">
                 <TeamLogo
                   constructorId={s.Constructors[0]?.constructorId ?? ""}
@@ -99,7 +100,9 @@ export default function DriverStandingsPage() {
         }
         .row:hover { border-color: var(--dim); }
         .pos { font-size: 20px; color: var(--text); }
-        .driver { min-width: 0; }
+        .driver { min-width: 0; display: block; }
+        .driver:hover .d-name { color: var(--f1-red); }
+        .d-name { transition: color .15s; }
         .d-name { font-size: 15px; }
         .d-name strong { font-weight: 700; }
         .d-flag { margin-right: 6px; }
