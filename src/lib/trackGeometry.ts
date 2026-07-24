@@ -20,16 +20,23 @@ export type TrackGeometry = {
   path: Pt[];                                   // 등간격 리샘플된 한 바퀴
   corners: { n: number; idx: number; x: number; y: number }[];
   straights: { from: number; to: number }[];
-  boostZones: { from: number; to: number }[];   // DRS(≤2025) / 오버테이크(2026~)
+  boostZones: { from: number; to: number }[];   // 데이터로 확인된 DRS 활성 구간
+  /** 가장 긴 직선 3곳 — 2026 액티브 에어로(X-모드) 구간 추정 */
+  straightZones: { from: number; to: number }[];
+  /** DRS 디텍션 — 존마다 하나씩 (2011~2025) */
   detections: { idx: number; x: number; y: number }[];
+  /** 오버테이크 디텍션 — 서킷당 하나 (2026~). 공식 맵 기준 추정값 */
+  overtakeDetection: { idx: number; x: number; y: number } | null;
+  /** 오버테이크 액티베이션 — 주 직선 진입점 (2026~) */
+  overtakeActivation: { idx: number; x: number; y: number } | null;
   unitsPerMeter: number;                        // 좌표 단위 → 미터 환산 근사
 };
 
 const SAMPLES = 420;          // 한 바퀴를 몇 점으로 리샘플할지 (≈12m/샘플)
 const CURV_WINDOW = 3;        // 곡률 계산 창 (샘플 수)
-const CORNER_DEG = 6;         // 샘플당 이 각도 이상 꺾이면 코너 후보
+const CORNER_DEG = 5;         // 샘플당 이 각도 이상 꺾이면 코너 후보
 const CORNER_MERGE = 4;       // 이만큼 이내로 붙은 코너 후보는 한 코너로
-const MIN_CORNER_TURN = 24;   // 구간 누적 회전각(도) — 완만한 굴곡 걸러내기
+const MIN_CORNER_TURN = 18;   // 구간 누적 회전각(도) — 완만한 굴곡 걸러내기
 const MIN_STRAIGHT = 12;      // 직선으로 인정할 최소 샘플 수
 const BOOST_RATIO = 0.25;     // 최대 사용량 대비 이 비율 이상이면 존
 const BOOST_MERGE = 14;       // 드라이버별 편차로 갈라진 조각 병합
@@ -202,11 +209,18 @@ function nearestIdx(path: Pt[], p: Pt): number {
   return best;
 }
 
-export function analyzeTrack(drivers: Driver[]): TrackGeometry | null {
+export function analyzeTrack(
+  drivers: Driver[],
+  /** 서킷별 공표 위치(랩 진행률). 있으면 기하학적 추정 대신 이 값을 쓴다 */
+  override?: { detection?: number; activation?: number } | null
+): TrackGeometry | null {
   const lap = referenceLap(drivers);
   if (!lap || lap.length < 40) return null;
 
-  const path = smooth(resample(lap, SAMPLES), 2);
+  // 원본보다 과하게 촘촘히 리샘플하면 보간 노이즈가 곡률로 잡힌다.
+  // 1Hz 로 받은 랩은 점이 100여 개뿐이므로 샘플 수를 그에 맞춘다.
+  const N = Math.max(180, Math.min(SAMPLES, lap.length * 3));
+  const path = smooth(resample(lap, N), 2);
   if (path.length < 40) return null;
 
   // 랩 길이(좌표 단위) → 미터 환산 근사
@@ -220,11 +234,11 @@ export function analyzeTrack(drivers: Driver[]): TrackGeometry | null {
   const isCorner = curv.map((c) => c >= CORNER_DEG);
 
   // 붙어 있는 후보들을 한 코너로 합치고, 누적 회전각이 작은 굴곡은 버린다
-  const cornerRuns = mergeRuns(groupRuns(isCorner), SAMPLES, CORNER_MERGE).filter(
+  const cornerRuns = mergeRuns(groupRuns(isCorner), N, CORNER_MERGE).filter(
     (run) => {
       let turn = 0;
-      const len = runLen(run, SAMPLES);
-      for (let k = 0; k <= len; k++) turn += curv[(run.from + k) % SAMPLES];
+      const len = runLen(run, N);
+      for (let k = 0; k <= len; k++) turn += curv[(run.from + k) % N];
       return turn >= MIN_CORNER_TURN;
     }
   );
@@ -233,9 +247,9 @@ export function analyzeTrack(drivers: Driver[]): TrackGeometry | null {
     .map((run) => {
       // 구간 내 최대 곡률 지점을 정점으로
       let best = run.from, bv = -1;
-      const len = runLen(run, SAMPLES);
+      const len = runLen(run, N);
       for (let k = 0; k <= len; k++) {
-        const i = (run.from + k) % SAMPLES;
+        const i = (run.from + k) % N;
         if (curv[i] > bv) { bv = curv[i]; best = i; }
       }
       return { idx: best, x: path[best].x, y: path[best].y };
@@ -245,11 +259,11 @@ export function analyzeTrack(drivers: Driver[]): TrackGeometry | null {
     .map((c, i) => ({ n: i + 1, ...c }));
 
   const straights = groupRuns(isCorner.map((c) => !c)).filter(
-    (r) => runLen(r, SAMPLES) >= MIN_STRAIGHT
+    (r) => runLen(r, N) >= MIN_STRAIGHT
   );
 
   // ── 부스트(DRS/오버테이크) 존 ──
-  const hits = new Array<number>(SAMPLES).fill(0);
+  const hits = new Array<number>(N).fill(0);
   for (const d of drivers) {
     for (const f of d.frames) {
       if (!DRS_ON.includes(f.drs ?? -1)) continue;
@@ -262,17 +276,61 @@ export function analyzeTrack(drivers: Driver[]): TrackGeometry | null {
   const boostZones = peak > 0
     ? mergeRuns(
         groupRuns(hits.map((h) => h >= peak * BOOST_RATIO)),
-        SAMPLES,
+        N,
         BOOST_MERGE
-      ).filter((r) => runLen(r, SAMPLES) >= MIN_BOOST)
+      ).filter((r) => runLen(r, N) >= MIN_BOOST)
     : [];
 
-  // ── 디텍션 (추정) ──
-  const backSamples = Math.round((DETECT_BEFORE_M * unitsPerMeter) / (lapLen / SAMPLES));
-  const detections = boostZones.map((z) => {
-    const idx = (z.from - backSamples + SAMPLES * 2) % SAMPLES;
-    return { idx, x: path[idx].x, y: path[idx].y };
-  });
+  // ── 대체 존 — 활성 데이터가 없을 때 쓸 가장 긴 직선 3곳 ──
+  const straightZones = [...straights]
+    .sort((a, b) => runLen(b, N) - runLen(a, N))
+    .slice(0, 3);
 
-  return { path, corners, straights, boostZones, detections, unitsPerMeter };
+  // ── 디텍션 (추정) ──
+  // 실제 디텍션 라인 좌표는 어느 API에도 없다. 존 시작점 기준으로 역산한다.
+  const backSamples = Math.round((DETECT_BEFORE_M * unitsPerMeter) / (lapLen / N));
+  const at = (i: number) => ({ idx: i, x: path[i].x, y: path[i].y });
+
+  // DRS 시대: 존마다 디텍션이 하나씩
+  const detections = boostZones.map((z) =>
+    at((z.from - backSamples + N * 2) % N)
+  );
+
+  // 2026 오버테이크: 활성 '존'이 없고 지점이 두 곳이다.
+  //   액티베이션 — 주 직선 진입점
+  //   디텍션     — 그 직선으로 들어가기 전 마지막 코너 앞
+  // (공식 서킷맵의 배치를 따른 추정. 실제 좌표는 어느 API에도 없다)
+  let overtakeActivation: { idx: number; x: number; y: number } | null = null;
+  let overtakeDetection: { idx: number; x: number; y: number } | null = null;
+
+  // 공표된 값이 있으면 그대로 쓴다 (랩 진행률 → 샘플 인덱스)
+  const frac = (f: number) => Math.round(((f % 1) + 1) % 1 * N) % N;
+  if (override?.activation != null) overtakeActivation = at(frac(override.activation));
+  if (override?.detection != null) overtakeDetection = at(frac(override.detection));
+
+  if (straightZones.length && (!overtakeActivation || !overtakeDetection)) {
+    const act = straightZones[0].from;
+    if (!overtakeActivation) overtakeActivation = at(act);
+
+    // 액티베이션 직전에 있는 코너를 찾아 그보다 조금 앞에 디텍션을 둔다
+    let prevCorner: number | null = null;
+    let bestGap = Infinity;
+    for (const c of corners) {
+      const gap = (act - c.idx + N) % N;
+      if (gap > 0 && gap < bestGap) { bestGap = gap; prevCorner = c.idx; }
+    }
+    // 디텍션이 액티베이션에서 너무 멀어지지 않게 제한 (랩의 1/8 이내)
+    const maxBack = Math.round(N / 8);
+    const rawBack =
+      prevCorner != null
+        ? ((act - prevCorner + N) % N) + Math.round(backSamples * 0.5)
+        : backSamples * 2;
+    const detIdx = (act - Math.min(rawBack, maxBack) + N * 2) % N;
+    if (!overtakeDetection) overtakeDetection = at(detIdx);
+  }
+
+  return {
+    path, corners, straights, boostZones, straightZones,
+    detections, overtakeDetection, overtakeActivation, unitsPerMeter,
+  };
 }

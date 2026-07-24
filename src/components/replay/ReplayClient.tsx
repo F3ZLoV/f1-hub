@@ -50,8 +50,9 @@ export default function ReplayClient() {
   const [startMin, setStartMin] = useState(0);
   const [win, setWin] = useState(600);
 
-  // 풀레이스는 데이터가 많으므로 샘플링을 낮춰 전송량을 줄인다
-  const hz = full ? 1 : 2;
+  // 1Hz 로 낮추면 250km/h 구간에서 샘플 간격이 70m라 코너가 뭉개진다.
+  // 트랙 구조 분석(코너·직선 판정)이 무너지므로 2Hz 를 유지한다.
+  const hz = 2;
 
   const { data, error, loading, loadedSec, totalSec } = useReplayData(sessionKey, {
     mode: full ? "full" : "window",
@@ -244,7 +245,7 @@ export default function ReplayClient() {
           {meeting.year} {meeting.country_name} · {meeting.circuit_short_name} ·{" "}
           {session.session_name} ·{" "}
           {full
-            ? `풀 세션 (${hz}Hz, 5분 청크 점진 로딩)`
+            ? `풀 세션 (${hz}Hz · 5분 청크 점진 로딩)`
             : `+${startMin}분부터 ${win / 60}분 (${hz}Hz)`}
         </p>
       )}

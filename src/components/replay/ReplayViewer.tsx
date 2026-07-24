@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { analyzeTrack, type TrackGeometry } from "@/lib/trackGeometry";
+import { circuitPoints } from "@/lib/circuitPoints";
 import type { Frame, Driver, ReplayData } from "./useReplayData";
 
 // ── 연도별 규정 (2026: DRS 폐지 → Overtake Mode) ──────
@@ -55,7 +56,7 @@ export default function ReplayViewer({
     ? data.drivers.reduce((n, d) => n + d.frames.length, 0)
     : 0;
   const geo: TrackGeometry | null = useMemo(
-    () => (data ? analyzeTrack(data.drivers) : null),
+    () => (data ? analyzeTrack(data.drivers, circuitPoints(data.circuit)) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data?.session_key, frameTotal]
   );
@@ -272,38 +273,47 @@ export default function ReplayViewer({
           return best;
         };
 
-        // ① 섹터별로 트랙 색칠 (S1 레드 · S2 시안 · S3 옐로)
+        // ① 섹터 — 트랙을 덮지 않고 안쪽을 따라가는 가는 실선으로
         const secs = data.sectors ?? [];
         const i2 = secs.find((x) => x.n === 2) ? nearestOnPath(secs.find((x) => x.n === 2)!) : -1;
         const i3 = secs.find((x) => x.n === 3) ? nearestOnPath(secs.find((x) => x.n === 3)!) : -1;
         if (i2 >= 0 && i3 >= 0) {
-          strokeRun(0, i2, "#E10600", 9);
-          strokeRun(i2, i3, "#22D3EE", 9);
-          strokeRun(i3, 0, "#FFD43B", 9);
-        } else {
-          strokeRun(0, N - 1, "#3A4452", 9);
+          strokeRun(0, i2, "#E10600", 3);
+          strokeRun(i2, i3, "#22D3EE", 3);
+          strokeRun(i3, 0, "#FFD43B", 3);
         }
 
-        // ② 부스트 존 — 트랙 바깥으로 평행 이동한 점선
+        // ② 구간 표시 — 트랙 바깥으로 평행 이동한 점선
+        //  ≤2025: DRS 활성 존 (데이터로 확인된 실제 구간)
+        //  2026~: 오버테이크는 활성 '존'이 없다. 랩 어디서든 쓸 수 있다.
+        //         대신 액티브 에어로(X-모드)가 작동하는 주요 직선을 표시한다.
         const zoneColor = modernRef.current ? "#A78BFA" : "#39E07B";
         if (hasBoostRef.current) {
           for (const z of g.boostZones) strokeRun(z.from, z.to, zoneColor, 5, 15, [7, 5]);
         } else if (modernRef.current) {
-          // 2026: 활성 데이터가 없다. 규정상 액티브 에어로는 지정된 직선에서만
-          // 쓰이므로, 가장 긴 직선 3개만 참고용으로 표시한다.
-          const longest = [...g.straights]
-            .sort((a, b) =>
-              ((b.to - b.from + N) % N) - ((a.to - a.from + N) % N)
-            )
-            .slice(0, 3);
-          ctx.globalAlpha = 0.7;
-          for (const st of longest) strokeRun(st.from, st.to, zoneColor, 4, 15, [5, 6]);
+          ctx.globalAlpha = 0.65;
+          for (const z of g.straightZones) strokeRun(z.from, z.to, zoneColor, 4, 15, [5, 6]);
           ctx.globalAlpha = 1;
         }
 
         // ③ 디텍션 — 트랙 위 점 + 지시선 + 라벨 (위치는 추정)
-        if (hasBoostRef.current) {
-          g.detections.forEach((d, k) => {
+        //  ≤2025: DRS 존마다 하나씩
+        //  2026~: 서킷당 하나. 여기서 1초 이내면 다음 랩에 오버테이크 사용 가능
+        {
+          type Marker = { idx: number; x: number; y: number; label: string };
+          const markers: Marker[] = hasBoostRef.current
+            ? g.detections.map((d, i) => ({ ...d, label: `DRS DET ${i + 1}` }))
+            : modernRef.current
+              ? [
+                  ...(g.overtakeDetection
+                    ? [{ ...g.overtakeDetection, label: "OVERTAKE DETECTION" }]
+                    : []),
+                  ...(g.overtakeActivation
+                    ? [{ ...g.overtakeActivation, label: "OVERTAKE ACTIVATION" }]
+                    : []),
+                ]
+              : [];
+          markers.forEach((d) => {
             const { nx, ny } = outward(d.idx);
             const p0 = S[d.idx];
             const p1 = { x: p0.x + nx * 34, y: p0.y + ny * 34 };
@@ -313,12 +323,22 @@ export default function ReplayViewer({
             ctx.moveTo(p0.x, p0.y);
             ctx.lineTo(p1.x, p1.y);
             ctx.stroke();
-            ctx.fillStyle = zoneColor;
             ctx.beginPath();
-            ctx.arc(p0.x, p0.y, 4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.font = "600 9px ui-monospace, monospace";
-            const label = `DET ${k + 1}`;
+            ctx.arc(p0.x, p0.y, 4.5, 0, Math.PI * 2);
+            if (d.label.includes("ACTIVATION")) {
+              // 액티베이션은 속 빈 원으로 디텍션과 구분
+              ctx.fillStyle = "#0B0C0F";
+              ctx.fill();
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = zoneColor;
+              ctx.stroke();
+            } else {
+              ctx.fillStyle = zoneColor;
+              ctx.fill();
+            }
+            ctx.fillStyle = zoneColor;
+            ctx.font = "600 8px ui-monospace, monospace";
+            const label = d.label;
             const tw = ctx.measureText(label).width;
             ctx.fillText(label, p1.x - (nx < 0 ? tw : 0), p1.y + (ny < 0 ? 9 : -3));
           });
@@ -510,6 +530,25 @@ export default function ReplayViewer({
   const ss = (clock % 60).toFixed(1).padStart(4, "0");
   const bufferPct = totalSec ? Math.min(100, (loadedSec / totalSec) * 100) : 100;
 
+  // 선택 드라이버가 지금 해당 구간 안에 있는가.
+  //  ≤2025: DRS 존 (drs 값으로 실제 작동 여부까지 알 수 있다)
+  //  2026~: 액티브 에어로가 작동하는 직선. 오버테이크와는 별개 시스템이며,
+  //         오버테이크는 랩 어디서나 쓸 수 있어 위치로 판정할 수 없다.
+  const inZone = (() => {
+    if (!geo || !sf) return false;
+    const gp = geo.path;
+    const NP = gp.length;
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < NP; i++) {
+      const dd = (gp[i].x - sf.x) ** 2 + (gp[i].y - sf.y) ** 2;
+      if (dd < bd) { bd = dd; best = i; }
+    }
+    const zones = hasBoostData ? geo.boostZones : geo.straightZones;
+    return zones.some(
+      (z) => ((best - z.from + NP) % NP) <= ((z.to - z.from + NP) % NP)
+    );
+  })();
+
   // AI 타이어 분석
   let ai: { comp: string; age: number; cur: number; rate: number } | null = null;
   if (sel.deg_curve && sf?.comp) {
@@ -569,17 +608,12 @@ export default function ReplayViewer({
               <span><i className="sw" style={{ background: "#E10600" }} />S1</span>
               <span><i className="sw" style={{ background: "#22D3EE" }} />S2</span>
               <span><i className="sw" style={{ background: "#FFD43B" }} />S3</span>
-              {hasBoostData ? (
-                <span>
-                  <i className="sw dash" style={{ borderColor: modern ? "#A78BFA" : "#39E07B" }} />
-                  {modern ? "OVERTAKE" : "DRS"} ZONE · DET(추정)
-                </span>
-              ) : modern ? (
-                <span>
-                  <i className="sw dash" style={{ borderColor: "#A78BFA" }} />
-                  주요 직선 · 활성 데이터 미제공
-                </span>
-              ) : null}
+              <span>
+                <i className="sw dash" style={{ borderColor: modern ? "#A78BFA" : "#39E07B" }} />
+                {hasBoostData
+                  ? "DRS ZONE · DETECTION(추정)"
+                  : "STRAIGHT MODE ZONE · OVERTAKE DET/ACT(추정)"}
+              </span>
               <span className="dim">{geo.corners.length} CORNERS</span>
             </div>
           )}
@@ -612,12 +646,20 @@ export default function ReplayViewer({
               </div>
             </div>
             {!hasBoostData ? (
-              <span
-                className="aero na mono"
-                title="OpenF1이 이 세션의 활성 데이터를 제공하지 않습니다"
-              >
-                {modern ? "OVERTAKE" : "DRS"} · N/A
-              </span>
+              <div className="aero-row">
+                <span
+                  className="aero na mono"
+                  title="오버테이크 사용 가능 여부는 디텍션 지점의 간격으로 정해지며 OpenF1이 제공하지 않습니다"
+                >
+                  {modern ? "OVERTAKE" : "DRS"} · N/A
+                </span>
+                <span
+                  className={`aero zone mono ${inZone ? "on" : ""}`}
+                  title="액티브 에어로가 작동하는 직선 구간 (좌표 기반 추정)"
+                >
+                  {inZone ? "X-MODE ●" : "X-MODE"}
+                </span>
+              </div>
             ) : (
               <span className={`aero mono ${DRS_ON.includes(sf?.drs ?? -1) ? (modern ? "otm" : "on") : ""}`}>
                 {DRS_ON.includes(sf?.drs ?? -1)
@@ -827,6 +869,8 @@ export default function ReplayViewer({
         .aero.on { color: #22D3EE; border-color: #22D3EE; background: rgba(34,211,238,.08); }
         .aero.otm { color: #A78BFA; border-color: #A78BFA; background: rgba(167,139,250,.08); }
         .aero.na { color: var(--dim); border-style: dashed; }
+        .aero-row { display: flex; gap: 6px; flex-wrap: wrap; }
+        .aero.zone.on { color: #A78BFA; border-color: #A78BFA; background: rgba(167,139,250,.08); }
 
         /* AI */
         .ai-panel { padding: 14px 16px; }
