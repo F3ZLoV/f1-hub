@@ -10,6 +10,8 @@ import {
 import { teamColor } from "@/lib/teams";
 import Flag from "@/components/Flag";
 import Countdown from "@/components/Countdown";
+import SessionSchedule from "@/components/SessionSchedule";
+import { weekendSessions, nextSession } from "@/lib/sessions";
 import { useAsync } from "@/lib/useAsync";
 
 export default function Home() {
@@ -32,6 +34,10 @@ export default function Home() {
   const constructors = data?.constructors ?? [];
   const circuitImg = data?.circuitImg ?? null;
 
+  // 레이스가 아니라 '다음 세션' 기준 카운트다운 (연습주행·스프린트 포함)
+  const sessions = next ? weekendSessions(next) : [];
+  const ns = nextSession(sessions);
+
   return (
     <div>
       <header className="page-head">
@@ -44,6 +50,15 @@ export default function Home() {
         <div className="card hero">
           {next ? (
             <>
+              {circuitImg && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  className="hero-circuit-img"
+                  src={circuitImg}
+                  alt={next.Circuit.circuitName}
+                />
+              )}
+
               <div className="hero-top">
                 <span className="eyebrow">NEXT RACE</span>
                 <span className="hero-round mono">R{next.round}</span>
@@ -51,14 +66,18 @@ export default function Home() {
               <div className="hero-flag">
                 <Flag country={next.Circuit.Location.country} size={44} />
               </div>
-              {circuitImg && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img className="hero-circuit-img" src={circuitImg} alt={next.Circuit.circuitName} />
-              )}
               <h2 className="hero-name display">{next.raceName}</h2>
               <div className="hero-circuit mono">{next.Circuit.circuitName}</div>
               <div className="hero-cd">
-                <Countdown target={`${next.date}T${next.time ?? "12:00:00Z"}`} />
+                <div className="eyebrow cd-label">
+                  {ns ? `NEXT · ${ns.label}` : "WEEKEND COMPLETE"}
+                </div>
+                <Countdown
+                  target={(ns?.start ?? new Date(`${next.date}T${next.time ?? "12:00:00Z"}`)).toISOString()}
+                />
+              </div>
+              <div className="hero-sched">
+                <SessionSchedule race={next} compact />
               </div>
             </>
           ) : (
@@ -129,6 +148,7 @@ export default function Home() {
         /* 히어로 */
         .hero {
           position: relative;
+          overflow: hidden;
           padding: 26px 28px;
           grid-row: span 2;
           display: flex; flex-direction: column;
@@ -136,21 +156,33 @@ export default function Home() {
             radial-gradient(circle at 90% 10%, rgba(225,6,0,0.12), transparent 50%),
             var(--surface);
         }
+
+        /* 서킷 실루엣 — 제목 오른쪽에 크게 겹치도록 */
+        .hero-circuit-img {
+          position: absolute;
+          top: 34px; right: -18px;
+          width: 230px; height: 230px;
+          object-fit: contain;
+          opacity: 0.16;
+          filter: brightness(0) invert(1);
+          pointer-events: none;
+          z-index: 0;
+        }
+
+        /* 서킷 실루엣 위로 콘텐츠 올리기 */
+        .hero > *:not(.hero-circuit-img) {
+          position: relative;
+          z-index: 1;
+        }
+
         .hero-top { display: flex; justify-content: space-between; align-items: center; }
         .hero-round { font-size: 13px; color: var(--f1-red); font-weight: 600; }
         .hero-flag { font-size: 52px; margin: 20px 0 8px; }
         .hero-name { font-size: 32px; line-height: 1.05; text-transform: uppercase; margin-bottom: 8px; }
         .hero-circuit { font-size: 12px; color: var(--muted); }
-        .hero-circuit-img {
-          position: absolute;
-          top: 20px; right: 24px;
-          width: 100px; height: 100px;
-          object-fit: contain;
-          opacity: 0.6;
-          filter: brightness(0) invert(1);
-          pointer-events: none;
-        }
-        .hero-cd { margin-top: auto; padding-top: 28px; }
+        .hero-cd { margin-top: auto; padding-top: 24px; }
+        .cd-label { margin-bottom: 10px; }
+        .hero-sched { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
 
         /* 리플레이 */
         .replay {

@@ -13,6 +13,10 @@ export interface Circuit {
   circuitName: string;
   Location: { locality: string; country: string; lat: string; long: string };
 }
+export interface SessionTime {
+  date: string;
+  time?: string;
+}
 export interface Race {
   season: string;
   round: string;
@@ -20,6 +24,14 @@ export interface Race {
   date: string;
   time?: string;
   Circuit: Circuit;
+  // 주말 세션 일정 (2021+ 데이터에 존재, 시각은 UTC)
+  FirstPractice?: SessionTime;
+  SecondPractice?: SessionTime;
+  ThirdPractice?: SessionTime;
+  Qualifying?: SessionTime;
+  Sprint?: SessionTime;
+  SprintQualifying?: SessionTime;
+  SprintShootout?: SessionTime;
 }
 export interface Driver {
   driverId: string;

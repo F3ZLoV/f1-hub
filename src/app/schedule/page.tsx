@@ -3,6 +3,8 @@
 import { getSchedule, getNextRace, type Race } from "@/lib/f1api";
 import Flag from "@/components/Flag";
 import Countdown from "@/components/Countdown";
+import SessionSchedule from "@/components/SessionSchedule";
+import { weekendSessions, nextSession } from "@/lib/sessions";
 import { useAsync } from "@/lib/useAsync";
 
 function raceDateTime(r: Race): string {
@@ -24,6 +26,10 @@ export default function SchedulePage() {
   const now = new Date();
   const nextRound = next?.round;
 
+  // 레이스가 아니라 '다음 세션' 기준 (연습주행·스프린트 포함)
+  const sessions = next ? weekendSessions(next) : [];
+  const ns = nextSession(sessions);
+
   return (
     <div>
       <header className="page-head">
@@ -35,16 +41,26 @@ export default function SchedulePage() {
 
       {next && (
         <div className="card next-race">
-          <div className="next-left">
-            <div className="eyebrow">NEXT RACE · ROUND {next.round}</div>
-            <h2 className="next-name display">
-              <Flag country={next.Circuit.Location.country} size={22} /> {next.raceName}
-            </h2>
-            <div className="next-circuit mono">
-              {next.Circuit.circuitName} · {next.Circuit.Location.locality}, {next.Circuit.Location.country}
+          <div className="next-top">
+            <div className="next-left">
+              <div className="eyebrow">NEXT RACE · ROUND {next.round}</div>
+              <h2 className="next-name display">
+                <Flag country={next.Circuit.Location.country} size={22} /> {next.raceName}
+              </h2>
+              <div className="next-circuit mono">
+                {next.Circuit.circuitName} · {next.Circuit.Location.locality}, {next.Circuit.Location.country}
+              </div>
+            </div>
+            <div className="next-cd">
+              <div className="eyebrow cd-label">
+                {ns ? `NEXT · ${ns.label}` : "WEEKEND COMPLETE"}
+              </div>
+              <Countdown target={(ns?.start ?? new Date(raceDateTime(next))).toISOString()} />
             </div>
           </div>
-          <Countdown target={raceDateTime(next)} />
+          <div className="next-sched">
+            <SessionSchedule race={next} />
+          </div>
         </div>
       )}
 
@@ -74,7 +90,6 @@ export default function SchedulePage() {
       <style>{`
         .msg { padding: 28px; text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
         .next-race {
-          display: flex; justify-content: space-between; align-items: center;
           padding: 26px 30px; margin-bottom: 28px;
           background:
             radial-gradient(circle at 95% 0%, rgba(225,6,0,0.1), transparent 45%),
@@ -82,6 +97,10 @@ export default function SchedulePage() {
         }
         .next-name { font-size: 26px; text-transform: uppercase; margin: 8px 0 6px; }
         .next-circuit { font-size: 12px; color: var(--muted); }
+        .next-top { display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
+        .next-cd { text-align: right; }
+        .cd-label { margin-bottom: 10px; }
+        .next-sched { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 18px; }
 
         .schedule-list { display: flex; flex-direction: column; gap: 8px; }
         .race-row {
@@ -102,7 +121,8 @@ export default function SchedulePage() {
         .race-status.up { color: var(--dim); }
 
         @media (max-width: 768px) {
-          .next-race { flex-direction: column; align-items: flex-start; gap: 20px; padding: 20px; }
+          .next-race { padding: 20px; }
+          .next-cd { text-align: left; }
           .race-row { grid-template-columns: 44px 28px 1fr 50px; }
           .race-date { display: none; }
         }
