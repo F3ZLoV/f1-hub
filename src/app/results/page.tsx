@@ -9,8 +9,8 @@ import {
   type RaceResult,
   type QualifyingResult,
 } from "@/lib/f1api";
-import { teamColor } from "@/lib/teams";
 import Flag from "@/components/Flag";
+import TeamLogo from "@/components/TeamLogo";
 
 const FIRST_SEASON = 2021;
 type Tab = "race" | "quali" | "grid";
@@ -107,8 +107,6 @@ export default function ResultsPage() {
     [results]
   );
 
-  const stripe = (id?: string) => ({ background: teamColor(id) });
-
   return (
     <div>
       <header className="page-head">
@@ -161,7 +159,11 @@ export default function ResultsPage() {
               {winner ? (
                 <>
                   <div className="sum-name display">
-                    <span className="stripe" style={stripe(winner.Constructor.constructorId)} />
+                    <TeamLogo
+                      constructorId={winner.Constructor.constructorId}
+                      name={winner.Constructor.name}
+                      size={30}
+                    />
                     {winner.Driver.familyName}
                   </div>
                   <div className="sum-sub mono">
@@ -181,7 +183,11 @@ export default function ResultsPage() {
               {pole ? (
                 <>
                   <div className="sum-name display">
-                    <span className="stripe" style={stripe(pole.Constructor.constructorId)} />
+                    <TeamLogo
+                      constructorId={pole.Constructor.constructorId}
+                      name={pole.Constructor.name}
+                      size={30}
+                    />
                     {pole.Driver.familyName}
                   </div>
                   <div className="sum-sub mono">
@@ -201,7 +207,11 @@ export default function ResultsPage() {
               {fastest ? (
                 <>
                   <div className="sum-name display">
-                    <span className="stripe" style={stripe(fastest.Constructor.constructorId)} />
+                    <TeamLogo
+                      constructorId={fastest.Constructor.constructorId}
+                      name={fastest.Constructor.name}
+                      size={30}
+                    />
                     {fastest.Driver.familyName}
                   </div>
                   <div className="sum-sub mono">
@@ -250,7 +260,11 @@ export default function ResultsPage() {
                     <strong>{r.Driver.familyName}</strong>
                   </span>
                   <span className="team">
-                    <i className="stripe" style={stripe(r.Constructor.constructorId)} />
+                    <TeamLogo
+                      constructorId={r.Constructor.constructorId}
+                      name={r.Constructor.name}
+                      size={22}
+                    />
                     {r.Constructor.name}
                   </span>
                   <span className="r mono dim">{r.laps}</span>
@@ -279,7 +293,11 @@ export default function ResultsPage() {
                       <strong>{q.Driver.familyName}</strong>
                     </span>
                     <span className="team">
-                      <i className="stripe" style={stripe(q.Constructor.constructorId)} />
+                      <TeamLogo
+                        constructorId={q.Constructor.constructorId}
+                        name={q.Constructor.name}
+                        size={22}
+                      />
                       {q.Constructor.name}
                     </span>
                     <span className="r mono dim">{q.Q1 ?? "—"}</span>
@@ -313,7 +331,11 @@ export default function ResultsPage() {
                         <strong>{r.Driver.familyName}</strong>
                       </span>
                       <span className="team">
-                        <i className="stripe" style={stripe(r.Constructor.constructorId)} />
+                        <TeamLogo
+                          constructorId={r.Constructor.constructorId}
+                          name={r.Constructor.name}
+                          size={22}
+                        />
                         {r.Constructor.name}
                       </span>
                       <span className="r mono dim">{r.position}</span>
@@ -364,7 +386,7 @@ export default function ResultsPage() {
           display: flex; align-items: center; gap: 10px;
           font-size: 22px; text-transform: uppercase; margin-bottom: 6px;
         }
-        .sum-name .stripe { width: 4px; height: 22px; flex-shrink: 0; }
+        .sum-name { line-height: 1.1; }
         .sum-sub { font-size: 11px; color: var(--muted); }
         .sum-empty { font-size: 12px; color: var(--dim); padding: 8px 0; }
 

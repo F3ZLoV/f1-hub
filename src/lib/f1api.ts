@@ -56,7 +56,12 @@ export interface RaceResult {
   Driver: Driver;
   Constructor: Constructor;
   Time?: { time: string };
-  FastestLap?: { rank: string; Time?: { time: string } };
+  FastestLap?: {
+    rank: string;
+    lap?: string;
+    Time?: { time: string };
+    AverageSpeed?: { units: string; speed: string };
+  };
 }
 export interface RaceWithResults extends Race {
   Results: RaceResult[];
@@ -117,13 +122,51 @@ export async function getNextRace(season: string | number = "current"): Promise<
 }
 
 /** 한 시즌의 모든 레이스 결과 (완료된 것만) */
-export async function getSeasonResults(season: string | number): Promise<RaceWithResults[]> {
-  // limit 넉넉히 (한 시즌 ~24R × 20명 = 480행) — 라운드별로 나눠 오지만 Jolpica는 flat 반환
-  const data = await jolpica<any>(`${season}/results/?limit=600`);
+/** 시즌 결과 파일 캐시 (S3+CloudFront 에 구운 것). 없으면 null */
+const seasonFileCache = new Map<string, RaceWithResults[] | null>();
+
+async function loadSeasonFile(
+  season: string | number
+): Promise<RaceWithResults[] | null> {
+  const key = String(season);
+  if (seasonFileCache.has(key)) return seasonFileCache.get(key)!;
+  let val: RaceWithResults[] | null = null;
+  try {
+    // 같은 오리진(CloudFront) — 엣지 캐시에서 바로 나온다
+    const res = await fetch(`/data/results-${key}.json`);
+    if (res.ok) val = await res.json();
+  } catch {
+    /* 캐시 없으면 Jolpica 로 폴백 */
+  }
+  seasonFileCache.set(key, val);
+  return val;
+}
+
+/**
+ * 시즌 우승자 목록 (레이스당 1행) — 결과 페이지 목록·선택기용.
+ * Jolpica 는 limit 상한이 100 이라 전체 결과(20명×24전)를 한 번에 못 받는다.
+ * 목록에는 우승자만 필요하므로 position=1 필터로 받아 24행으로 끝낸다.
+ */
+export async function getSeasonWinners(
+  season: string | number
+): Promise<RaceWithResults[]> {
+  const cached = await loadSeasonFile(season);
+  if (cached) return cached.map((r) => ({ ...r, Results: r.Results.slice(0, 1) }));
+  const data = await jolpica<any>(`${season}/results/1/?limit=100`);
   return data?.MRData?.RaceTable?.Races ?? [];
 }
 
-/** 특정 라운드 결과 */
+/** 특정 라운드의 전체 순위 */
+export async function getRoundResults(
+  season: string | number,
+  round: string | number
+): Promise<RaceWithResults | null> {
+  const cached = await loadSeasonFile(season);
+  if (cached) return cached.find((r) => r.round === String(round)) ?? null;
+  const data = await jolpica<any>(`${season}/${round}/results/?limit=100`);
+  return data?.MRData?.RaceTable?.Races?.[0] ?? null;
+}
+
 export async function getRaceResults(season: string | number, round: string | number) {
   const data = await jolpica<any>(`${season}/${round}/results/?limit=30`);
   return data?.MRData?.RaceTable?.Races?.[0] ?? null;

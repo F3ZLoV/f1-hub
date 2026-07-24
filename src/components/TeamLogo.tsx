@@ -39,11 +39,19 @@ export default function TeamLogo({
   // 매핑 없거나 로드 실패 → 이니셜 폴백
   if (!file || failed) {
     return (
-      <span className="team-badge display" style={{ background: color, width: size, height: size }}>
+      <span
+        className="team-badge display"
+        style={{
+          background: color,
+          width: size,
+          height: size,
+          fontSize: Math.max(8, Math.round(size * 0.28)),
+        }}
+      >
         {teamShort(constructorId, name)}
         <style>{`
           .team-badge {
-            color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
+            color: #fff; font-weight: 700; letter-spacing: 0.03em;
             display: inline-flex; align-items: center; justify-content: center;
             clip-path: var(--clip-sm); flex-shrink: 0; text-align: center;
           }
@@ -53,17 +61,13 @@ export default function TeamLogo({
   }
 
   return (
-    <span
-      className="team-logo"
-      style={{ width: size, height: size, background: color }}
-    >
+    <span className="team-logo" style={{ width: size, height: size }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={`/logos/${file}.svg`} alt={name} onError={() => setFailed(true)} />
       <style>{`
         .team-logo {
           display: inline-flex; align-items: center; justify-content: center;
-          clip-path: var(--clip-sm); flex-shrink: 0;
-          padding: 6px;
+          flex-shrink: 0;
         }
         .team-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
       `}</style>

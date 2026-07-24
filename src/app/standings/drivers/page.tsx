@@ -4,6 +4,7 @@ import { getDriverStandings, getDriverMeta } from "@/lib/f1api";
 import { teamColor } from "@/lib/teams";
 import Flag from "@/components/Flag";
 import DriverAvatar from "@/components/DriverAvatar";
+import TeamLogo from "@/components/TeamLogo";
 import { useAsync } from "@/lib/useAsync";
 
 export default function DriverStandingsPage() {
@@ -61,7 +62,11 @@ export default function DriverStandingsPage() {
                 <div className="d-num mono">#{s.Driver.permanentNumber ?? "—"} · {code}</div>
               </div>
               <div className="team">
-                <span className="team-stripe" style={{ background: color }} />
+                <TeamLogo
+                  constructorId={s.Constructors[0]?.constructorId ?? ""}
+                  name={s.Constructors[0]?.name ?? ""}
+                  size={26}
+                />
                 <span className="team-name">{s.Constructors[0]?.name ?? "—"}</span>
               </div>
               <span className="wins mono">{s.wins}</span>
@@ -100,7 +105,6 @@ export default function DriverStandingsPage() {
         .d-flag { margin-right: 6px; }
         .d-num { font-size: 11px; color: var(--muted); margin-top: 2px; }
         .team { display: flex; align-items: center; gap: 10px; min-width: 0; }
-        .team-stripe { width: 4px; height: 24px; flex-shrink: 0; }
         .team-name { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .wins { font-size: 14px; text-align: right; color: var(--muted); }
         .pts-wrap { position: relative; text-align: right; }
